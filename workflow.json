@@ -1,0 +1,433 @@
+{
+  "name": "Gerador de capas / 2.5 flash",
+  "nodes": [
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer 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"
+            },
+            {
+              "name": "HTTP-Referer",
+              "value": "https://n8n.io"
+            },
+            {
+              "name": "X-Title",
+              "value": "Gerador de Thumbnails"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json._body }}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1
+            }
+          },
+          "timeout": 120000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3744,
+        3216
+      ],
+      "id": "fe07af6a-5f19-4b9d-ba9f-903dbde36791",
+      "name": "HTTP Request3",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ═══════════════════════════════════════════════════════════════════\n// 🖼️ CODE4 - EXTRAÇÃO DE IMAGENS COM LOGS DETALHADOS\n// ═══════════════════════════════════════════════════════════════════\n\nconst results = $input.all();\n\nconsole.log('━━━━━━━━━━ CODE4: EXTRAÇÃO DE IMAGENS ━━━━━━━━━━');\nconsole.log(`📥 Requisições recebidas: ${results.length}`);\n\n// ✅ VALIDAÇÃO CRÍTICA\nif (results.length === 0) {\n  console.error('❌ ERRO CRÍTICO: Nenhuma resposta recebida da API!');\n  console.error('   Isso significa que o HTTP Request3 não retornou dados.');\n  return [{ \n    json: { \n      success: false,\n      count: 0,\n      images: [],\n      errors: [{ error: 'Nenhuma resposta recebida da API', inputCount: 0 }],\n      extractionInfo: {\n        inputItems: 0,\n        imagesExtracted: 0,\n        errorsCount: 1,\n        timestamp: new Date().toISOString()\n      }\n    } \n  }];\n}\n\nif (results.length !== 2) {\n  console.warn(`⚠️ AVISO: Esperado 2 respostas da API, mas recebido ${results.length}!`);\n  console.warn(`   Isso pode indicar que apenas ${results.length} requisição(ões) foi(ram) feita(s).`);\n}\n\nconst images = [];\nconst errors = [];\n\n// ==================== PROCESSAMENTO DE CADA RESPOSTA ====================\nfor (let itemIdx = 0; itemIdx < results.length; itemIdx++) {\n  const item = results[itemIdx];\n  \n  console.log(`\\n📋 Processando resposta ${itemIdx + 1}/${results.length}`);\n  \n  try {\n    // ==================== VALIDAÇÃO BÁSICA ====================\n    if (!item?.json) {\n      console.error(`❌ Item ${itemIdx + 1}: Sem dados JSON`);\n      errors.push({ \n        index: itemIdx + 1, \n        error: 'No JSON data',\n        raw: JSON.stringify(item).substring(0, 200)\n      });\n      continue;\n    }\n    \n    const root = item.json;\n    \n    // ==================== DETECÇÃO DE ERROS DA API ====================\n    if (root?.error) {\n      console.error(`❌ Item ${itemIdx + 1}: Erro da API`, root.error);\n      errors.push({ \n        index: itemIdx + 1, \n        error: root.error,\n        code: root.error.code,\n        message: root.error.message\n      });\n      continue;\n    }\n\n    // ==================== EXTRAÇÃO: FORMATO OPENROUTER ====================\n    const choices = root?.choices || [];\n    console.log(`🔍 Item ${itemIdx + 1}: ${choices.length} choice(s) encontrado(s)`);\n    \n    if (choices.length === 0) {\n      console.warn(`⚠️ Item ${itemIdx + 1}: Nenhum choice encontrado na resposta`);\n      console.warn(`   Estrutura recebida:`, Object.keys(root).join(', '));\n    }\n    \n    for (let choiceIdx = 0; choiceIdx < choices.length; choiceIdx++) {\n      const choice = choices[choiceIdx];\n      const message = choice?.message;\n      const content = message?.content;\n      \n      console.log(`  📋 Choice ${choiceIdx + 1}: content type = ${typeof content}`);\n      \n      // ==================== FORMATO 1: Content como Array (Multimodal) ====================\n      if (Array.isArray(content)) {\n        console.log(`  📋 Choice ${choiceIdx + 1}: ${content.length} parte(s) no content`);\n        \n        for (let partIdx = 0; partIdx < content.length; partIdx++) {\n          const part = content[partIdx];\n          \n          // Formato: { type: 'image_url', image_url: { url: 'data:...' } }\n          if (part?.type === 'image_url' && part?.image_url?.url) {\n            const imageUrl = part.image_url.url;\n            \n            if (imageUrl.startsWith('data:')) {\n              const base64Match = imageUrl.match(/data:image\\/([^;]+);base64,(.+)/);\n              \n              if (base64Match) {\n                const ext = base64Match[1] === 'png' ? 'png' : 'jpg';\n                images.push({\n                  fileName: `thumbnail-${images.length + 1}.${ext}`,\n                  mimeType: `image/${base64Match[1]}`,\n                  base64: base64Match[2],\n                  source: 'image_url_format',\n                  fromItem: itemIdx + 1,\n                  fromChoice: choiceIdx + 1\n                });\n                console.log(`    ✅ Imagem ${images.length} extraída (image_url) da resposta ${itemIdx + 1}`);\n              }\n            }\n          }\n          \n          // Formato alternativo: { type: 'image', data: 'base64...' }\n          if (part?.type === 'image' && part?.data) {\n            images.push({\n              fileName: `thumbnail-${images.length + 1}.png`,\n              mimeType: 'image/png',\n              base64: part.data,\n              source: 'image_data_format',\n              fromItem: itemIdx + 1,\n              fromChoice: choiceIdx + 1\n            });\n            console.log(`    ✅ Imagem ${images.length} extraída (image.data) da resposta ${itemIdx + 1}`);\n          }\n        }\n      }\n      \n      // ==================== FORMATO 2: Content como String com Base64 ====================\n      if (typeof content === 'string' && content.length > 100) {\n        const regex = /data:image\\/([^;]+);base64,([A-Za-z0-9+/=]+)/g;\n        let match;\n        \n        while ((match = regex.exec(content)) !== null) {\n          const ext = match[1] === 'png' ? 'png' : 'jpg';\n          images.push({\n            fileName: `thumbnail-${images.length + 1}.${ext}`,\n            mimeType: `image/${match[1]}`,\n            base64: match[2],\n            source: 'string_inline',\n            fromItem: itemIdx + 1,\n            fromChoice: choiceIdx + 1\n          });\n          console.log(`    ✅ Imagem ${images.length} extraída (string inline) da resposta ${itemIdx + 1}`);\n        }\n      }\n      \n      // ==================== FORMATO 3: Gemini específico - message.images[] ====================\n      const msgImages = message?.images || [];\n      if (msgImages.length > 0) {\n        console.log(`  📋 Choice ${choiceIdx + 1}: ${msgImages.length} imagem(ns) em message.images`);\n        \n        for (const img of msgImages) {\n          // { image_url: { url: 'data:...' } }\n          if (img?.image_url?.url) {\n            const url = img.image_url.url;\n            const m = url.match(/data:image\\/([^;]+);base64,(.+)/);\n            if (m) {\n              const ext = m[1] === 'png' ? 'png' : 'jpg';\n              images.push({\n                fileName: `thumbnail-${images.length + 1}.${ext}`,\n                mimeType: `image/${m[1]}`,\n                base64: m[2],\n                source: 'message_images',\n                fromItem: itemIdx + 1,\n                fromChoice: choiceIdx + 1\n              });\n              console.log(`    ✅ Imagem ${images.length} extraída (message.images) da resposta ${itemIdx + 1}`);\n            }\n          }\n          \n          // { url: 'data:...' }\n          if (img?.url && img.url.startsWith('data:')) {\n            const m = img.url.match(/data:image\\/([^;]+);base64,(.+)/);\n            if (m) {\n              const ext = m[1] === 'png' ? 'png' : 'jpg';\n              images.push({\n                fileName: `thumbnail-${images.length + 1}.${ext}`,\n                mimeType: `image/${m[1]}`,\n                base64: m[2],\n                source: 'message_images_url',\n                fromItem: itemIdx + 1,\n                fromChoice: choiceIdx + 1\n              });\n              console.log(`    ✅ Imagem ${images.length} extraída (message.images.url) da resposta ${itemIdx + 1}`);\n            }\n          }\n          \n          // { data: 'base64...' }\n          if (img?.data) {\n            images.push({\n              fileName: `thumbnail-${images.length + 1}.png`,\n              mimeType: 'image/png',\n              base64: img.data,\n              source: 'message_images_data',\n              fromItem: itemIdx + 1,\n              fromChoice: choiceIdx + 1\n            });\n            console.log(`    ✅ Imagem ${images.length} extraída (message.images.data) da resposta ${itemIdx + 1}`);\n          }\n        }\n      }\n    }\n    \n    // ==================== FORMATO 4: root.images[] diretamente ====================\n    if (root?.images && Array.isArray(root.images)) {\n      console.log(`🔍 Item ${itemIdx + 1}: ${root.images.length} imagem(ns) em root.images`);\n      \n      for (const img of root.images) {\n        if (img?.url && img.url.startsWith('data:')) {\n          const m = img.url.match(/data:image\\/([^;]+);base64,(.+)/);\n          if (m) {\n            const ext = m[1] === 'png' ? 'png' : 'jpg';\n            images.push({\n              fileName: `thumbnail-${images.length + 1}.${ext}`,\n              mimeType: `image/${m[1]}`,\n              base64: m[2],\n              source: 'root_images',\n              fromItem: itemIdx + 1\n            });\n            console.log(`  ✅ Imagem ${images.length} extraída (root.images) da resposta ${itemIdx + 1}`);\n          }\n        }\n        \n        if (img?.data) {\n          images.push({\n            fileName: `thumbnail-${images.length + 1}.png`,\n            mimeType: 'image/png',\n            base64: img.data,\n            source: 'root_images_data',\n            fromItem: itemIdx + 1\n          });\n          console.log(`  ✅ Imagem ${images.length} extraída (root.images.data) da resposta ${itemIdx + 1}`);\n        }\n      }\n    }\n    \n  } catch (err) {\n    console.error(`❌ Erro ao processar item ${itemIdx + 1}:`, err.message);\n    console.error(`❌ Stack:`, err.stack);\n    errors.push({ \n      index: itemIdx + 1, \n      error: err.message,\n      stack: err.stack\n    });\n  }\n}\n\n// ==================== RESULTADO FINAL ====================\nconsole.log(`\\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);\nconsole.log(`📊 RESULTADO FINAL:`);\nconsole.log(`   ✅ Imagens extraídas: ${images.length}`);\nconsole.log(`   ❌ Erros encontrados: ${errors.length}`);\nconsole.log(`   📥 Respostas processadas: ${results.length}`);\n\nif (images.length === 0) {\n  console.error(`\\n❌ ERRO CRÍTICO: Nenhuma imagem foi extraída!`);\n  console.error(`   Isso significa que as respostas da API não continham imagens no formato esperado.`);\n  console.error(`   Verifique os logs acima para ver a estrutura das respostas.`);\n} else if (images.length < 2) {\n  console.warn(`\\n⚠️ AVISO: Esperado 2 imagens, mas apenas ${images.length} foi(ram) extraída(s)!`);\n  console.warn(`   Isso pode indicar que:`);\n  console.warn(`   - Apenas ${results.length} requisição(ões) foi(ram) feita(s) à API`);\n  console.warn(`   - Alguma resposta não continha imagem`);\n  console.warn(`   - O formato da resposta não foi reconhecido`);\n}\n\n// Agrupa imagens por item de origem para debug\nconst imagesByItem = {};\nimages.forEach(img => {\n  const item = img.fromItem || 'unknown';\n  if (!imagesByItem[item]) imagesByItem[item] = [];\n  imagesByItem[item].push(img);\n});\n\nconsole.log(`\\n📊 Imagens por resposta:`);\nfor (const [item, imgs] of Object.entries(imagesByItem)) {\n  console.log(`   Resposta ${item}: ${imgs.length} imagem(ns)`);\n}\n\nconsole.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);\n\n// ==================== RETORNO ====================\nreturn [{ \n  json: { \n    success: images.length > 0,\n    count: images.length,\n    images: images,\n    errors: errors.length > 0 ? errors : undefined,\n    extractionInfo: {\n      inputItems: results.length,\n      imagesExtracted: images.length,\n      errorsCount: errors.length,\n      timestamp: new Date().toISOString(),\n      imagesByItem: imagesByItem\n    }\n  } \n}];\n\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4064,
+        3216
+      ],
+      "id": "0da42b09-7d69-47f0-8fd3-6bf964a67550",
+      "name": "Code4",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "0c1126d5-5b75-47b0-a43c-efb7d350a754",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        2608,
+        2848
+      ],
+      "id": "61f485d6-90d9-40d2-abcb-bbca8730cbf0",
+      "name": "Webhook",
+      "webhookId": "0c1126d5-5b75-47b0-a43c-efb7d350a754"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.2,
+      "position": [
+        4848,
+        3072
+      ],
+      "id": "f32dd118-f9ff-450b-85a6-311e39ae3a31",
+      "name": "Respond to Webhook1"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Converte a saída do nó de IA em { modelo, prompt }\nconst items = $input.all();\n\nfunction toStringSafe(v) {\n  if (v == null) return '';\n  return typeof v === 'string' ? v : JSON.stringify(v);\n}\n\nconst out = items.map(({ json }) => {\n  let raw = json.output ?? json.text ?? json.result ?? json.data ?? '';\n  raw = toStringSafe(raw).trim();\n  raw = raw.replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();\n\n  let obj;\n  try {\n    obj = JSON.parse(raw);\n  } catch (_) {\n    const start = raw.indexOf('{');\n    const end = raw.lastIndexOf('}');\n    if (start >= 0 && end > start) {\n      const candidate = raw.slice(start, end + 1);\n      obj = JSON.parse(candidate);\n    } else {\n      throw new Error('Não encontrei JSON na saída da IA: ' + raw);\n    }\n  }\n\n  if (!obj?.modelo || !obj?.prompt) {\n    throw new Error('JSON precisa conter \"modelo\" e \"prompt\". Recebido: ' + JSON.stringify(obj));\n  }\n\n  return { json: obj };\n});\n\nreturn out;\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3536,
+        2848
+      ],
+      "id": "7bae3602-59cb-451b-8c0b-5358774a3833",
+      "name": "Code1",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ═══════════════════════════════════════════════════════════════════\n// 🎨 GERADOR DE THUMBNAILS - VERSÃO CORRIGIDA (MAPEAMENTO DE ESTILOS)\n// ═══════════════════════════════════════════════════════════════════\n\n// ==================== 1. ACESSO AOS DADOS DO WEBHOOK ====================\nlet webhookData = {};\nlet webhookBinary = {};\n\ntry {\n  const webhookItem = $('Webhook').first();\n  if (webhookItem) {\n    webhookData = webhookItem.json || {};\n    webhookBinary = webhookItem.binary || {};\n  } else {\n    throw new Error('Webhook vazio');\n  }\n} catch (error) {\n  const items = $input.all();\n  if (items.length > 0) {\n    webhookData = items[0].json || {};\n    webhookBinary = items[0].binary || {};\n  }\n}\n\nconst body = webhookData.body || webhookData;\n\n// ==================== 2. FUNÇÃO DE NORMALIZAÇÃO ====================\nfunction normalizeInput(value, fallback = '') {\n  if (value === undefined || value === null) return fallback;\n  // Se for array (como vem no seu webhook: [\"Hiper-Realista\"]), pega o primeiro item\n  if (Array.isArray(value)) {\n    return value.length > 0 ? String(value[0]) : fallback;\n  }\n  return String(value);\n}\n\n// ==================== 3. CONFIGURAÇÃO DE RESOLUÇÃO DINÂMICA ====================\nlet resolutionRaw = body.resolutions || body.resolucao;\nconst resolutionString = normalizeInput(resolutionRaw, '1280x720');\n\nconst [widthStr, heightStr] = resolutionString.split(/[xX×]/);\nconst width = parseInt(widthStr) || 1280;\nconst height = parseInt(heightStr) || 720;\n\nconst gcd = (a, b) => b == 0 ? a : gcd(b, a % b);\nconst divisor = gcd(width, height);\nconst ratioStr = `${width/divisor}:${height/divisor}`;\n\n// ✅ CONFIGURAÇÃO PRINCIPAL - SEMPRE 2 IMAGENS\nconst CONFIG = {\n  width: width,\n  height: height,\n  aspectRatio: ratioStr,\n  imageCount: 2, \n  model: 'google/gemini-2.5-flash-image'\n};\n\n// ==================== 4. EXTRAÇÃO DE CAMPOS ====================\nconst title = normalizeInput(body.title || body.titulo, 'Curso Profissional');\n// Nota: Seu webhook usa 'category' para o estilo, então a paleta cairá no default (Tecnologia), o que é seguro.\nconst categoryRaw = normalizeInput(body.category || body.categoria, 'Tecnologia'); \nconst description = normalizeInput(body.description || body.descricao, '');\nconst userMessage = normalizeInput(body.userMessage || body.user_message, '');\n\n// ✅ CORREÇÃO AQUI: ADICIONADO 'body.category' NA BUSCA DE ESTILOS\nconst styleCategory = normalizeInput(\n  body.styleCategory || \n  body.categoriaEstilos || \n  body.style || \n  body.estilo || \n  body.categoriaDeEstilos || \n  body.category, // <--- ADICIONADO: Pega \"Hiper-Realista\" daqui\n  ''\n);\n\n// ==================== 5. PROCESSAMENTO DE IMAGENS DE REFERÊNCIA ====================\nconst referenceImages = [];\n\n// A. Processa Binários (uploads)\nfor (const [key, binData] of Object.entries(webhookBinary)) {\n  if (binData.mimeType && binData.mimeType.startsWith('image/')) {\n    if (binData.data) {\n      referenceImages.push({\n        type: 'binary',\n        mime: binData.mimeType,\n        base64: binData.data,\n        fileName: binData.fileName || `ref-${key}.jpg`\n      });\n    }\n  }\n}\n\n// B. Processa URLs ou Base64 do JSON (Seu webhook envia 'userReferenceImages')\nconst possibleImageFields = ['referenceImages', 'userReferenceImages', 'images', 'image', 'refUrl'];\n\nfor (const field of possibleImageFields) {\n  const value = body[field];\n  if (!value) continue;\n  \n  const items = Array.isArray(value) ? value : [value];\n  \n  for (const item of items) {\n    if (typeof item === 'string') {\n      if (item.startsWith('http')) {\n        referenceImages.push({ type: 'url', url: item });\n      } else if (item.startsWith('data:image/')) {\n        const match = item.match(/data:image\\/([^;]+);base64,(.+)/);\n        if (match) {\n          referenceImages.push({ type: 'base64', mime: `image/${match[1]}`, base64: match[2] });\n        }\n      }\n    }\n  }\n}\n\n// ==================== 6. PALETAS POR CATEGORIA ====================\nconst PALETTES = {\n  'Programação': { bg: 'deep navy blue (#0A1929)', accent: 'electric cyan (#00D4FF)', mood: 'tech noir' },\n  'Design': { bg: 'rich purple gradient', accent: 'vibrant magenta', mood: 'creative luxe' },\n  'Marketing': { bg: 'warm charcoal', accent: 'energetic orange', mood: 'dynamic bold' },\n  'Business': { bg: 'elegant black', accent: 'premium gold', mood: 'executive luxury' },\n  'Saúde': { bg: 'fresh teal gradient', accent: 'vibrant green', mood: 'vital energy' },\n  'Educação': { bg: 'sophisticated slate', accent: 'sunset orange', mood: 'inspiring warmth' },\n  'Tecnologia': { bg: 'cyber black', accent: 'neon red', mood: 'futuristic edge' }\n};\n\n// Se category for \"Hiper-Realista\", não achará no objeto acima e cairá em Tecnologia (Padrão seguro)\nconst palette = PALETTES[categoryRaw] || PALETTES['Tecnologia'];\n\n// ==================== 7. DEFINIÇÕES DE ESTILOS ====================\nconst STYLE_DEFINITIONS = {\n  'Hiper-Realista': {\n    description: 'Hyper-realistic rendering with photorealistic quality',\n    keywords: 'photorealistic, ultra-detailed, sharp focus, 8k resolution, unreal engine 5 render',\n    mood: 'premium realism'\n  },\n  'Anime': {\n    description: 'Manga/anime style with vibrant colors, bold outlines',\n    keywords: 'anime style, manga aesthetic, vibrant colors, expressive, studio ghibli style',\n    mood: 'energetic and expressive'\n  },\n  'Minimalista': {\n    description: 'Simple shapes, reduced color palette, clean composition',\n    keywords: 'minimalist, simple, clean, geometric, negative space, flat design',\n    mood: 'calm and sophisticated'\n  },\n  'Futurista': {\n    description: 'Futuristic sci-fi aesthetic with neon lights',\n    keywords: 'futuristic, sci-fi, neon lights, technology, cyberpunk, blade runner aesthetic',\n    mood: 'cutting-edge and innovative'\n  },\n  'Vintage': {\n    description: 'Retro vintage aesthetic with nostalgic colors',\n    keywords: 'vintage, retro, nostalgic, classic, aged textures, 70s poster style',\n    mood: 'nostalgic and classic'\n  },\n  'Cyberpunk': {\n    description: 'Cyberpunk with dystopian urban settings, neon lights',\n    keywords: 'cyberpunk, dystopian, urban, neon lights, high tech low life',\n    mood: 'dark and futuristic'\n  }\n};\n\n// Busca estilo (case-insensitive)\nfunction findStyleKey(styleInput) {\n  if (!styleInput) return null;\n  const normalized = styleInput.trim().toLowerCase();\n  return Object.keys(STYLE_DEFINITIONS).find(key => key.toLowerCase() === normalized) || null;\n}\n\nconst styleKey = findStyleKey(styleCategory);\nconst selectedStyle = styleKey ? STYLE_DEFINITIONS[styleKey] : null;\n\n// ==================== 8. PROMPT BASE ====================\nlet basePrompt = `\nCreate a stunning, award-winning course thumbnail cover.\n\n【 CRITICAL DIMENSIONS 】\n▸ EXACT SIZE: ${CONFIG.width} × ${CONFIG.height} pixels\n▸ ASPECT RATIO: ${CONFIG.aspectRatio}\n▸ Canvas MUST be ${CONFIG.width}px × ${CONFIG.height}px\n\n【 STYLE & ATMOSPHERE 】`.trim();\n\nif (selectedStyle) {\n  // ✅ ENTRA AQUI SE \"Hiper-Realista\" FOR DETECTADO\n  basePrompt += `\n▸ ARTISTIC STYLE: ${selectedStyle.description}\n▸ KEYWORDS: ${selectedStyle.keywords}\n▸ MOOD: ${selectedStyle.mood}\n▸ QUALITY: 4K, professional rendering`;\n} else {\n  // Fallback padrão Netflix\n  basePrompt += `\n▸ Ultra-premium Netflix/HBO aesthetic\n▸ MOOD: ${palette.mood}\n▸ QUALITY: 4K, cinematic lighting`;\n}\n\nbasePrompt += `\n\n【 TYPOGRAPHY 】\n▸ Title: \"${title}\"\n▸ Font: Bold sans-serif (large, readable)\n▸ Color: White or ${palette.accent}\n\n【 VISUALS 】\n▸ Background: ${palette.bg}\n▸ Theme: ${description}\n▸ Accent: ${palette.accent}`;\n\nif (userMessage) {\n  basePrompt += `\n▸ Custom Instructions: ${userMessage}`;\n}\n\nbasePrompt += `\\n\\nOUTPUT: ${CONFIG.width}x${CONFIG.height}px image.`;\n\n// ==================== 9. FUNÇÃO DE CONSTRUÇÃO ====================\nfunction buildRequestBody(prompt, refs, index) {\n  const content = [];\n  let textPrompt = prompt;\n  \n  // Variação para imagem 2\n  if (index === 1) {\n    textPrompt = `【 VARIATION 2 - DIFFERENT STYLE 】\nGenerate a COMPLETELY DIFFERENT creative interpretation.\nCHANGE: Layout, composition, color intensity, visual style\nMAINTAIN: ${CONFIG.width}x${CONFIG.height}px, title \"${title}\", overall theme\n\n${prompt}`;\n  }\n  \n  // Adiciona instrução de referências\n  if (refs.length > 0) {\n    textPrompt = `【 REFERENCE IMAGE ANALYSIS 】\n${refs.length} reference image(s) provided.\nCRITICAL: Analyze style, composition, colors from ALL references.\nPRESERVE faces/people EXACTLY as shown - NO modifications.\nUse as STRONG INSPIRATION for the design.\n\n${textPrompt}`;\n  }\n  \n  content.push({ type: 'text', text: textPrompt });\n  \n  return {\n    model: CONFIG.model,\n    messages: [{ role: 'user', content: content }],\n    temperature: 0.7 + (index * 0.2)\n  };\n}\n\n// ==================== 10. GERAÇÃO DAS SAÍDAS - SEMPRE 2! ====================\nconst outputs = [];\n\nfor (let i = 0; i < CONFIG.imageCount; i++) {\n  outputs.push({\n    json: {\n      _endpoint: 'https://openrouter.ai/api/v1/chat/completions',\n      _body: buildRequestBody(basePrompt, referenceImages, i),\n      _model: CONFIG.model,\n      _index: i + 1,\n      _totalImages: CONFIG.imageCount,\n      _refUrls: referenceImages,\n      _hasRefs: referenceImages.length > 0,\n      _styleCategory: styleCategory,\n      _selectedStyle: styleKey || null,\n      _size: `${CONFIG.width}x${CONFIG.height}`,\n      _dimensions: { width: CONFIG.width, height: CONFIG.height, ratio: CONFIG.aspectRatio }\n    }\n  });\n}\n\nreturn outputs;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4048,
+        2848
+      ],
+      "id": "4b34d937-e970-49b8-9455-8a9fc92b129b",
+      "name": "Gera o body + url",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ═══════════════════════════════════════════════════════════════════\n// 💥 EXPLODE REFS - VERSÃO CORRIGIDA PARA GARANTIR 2 OUTPUTS\n// ═══════════════════════════════════════════════════════════════════\n\nconst items = $input.all();\n\nconsole.log('━━━━━━━━━━ EXPLODE REFS ━━━━━━━━━━');\nconsole.log(`📥 Itens recebidos: ${items.length}`);\n\n// ✅ VALIDAÇÃO CRÍTICA: DEVE receber exatamente 2 itens\nif (items.length !== 2) {\n  console.error(`❌ ERRO CRÍTICO: Esperado 2 itens do \"Gera o body + url\", mas recebido ${items.length}!`);\n  console.error(`   Isso significa que o nó anterior não está gerando 2 requisições.`);\n  console.error(`   Verifique o código do \"Gera o body + url\" - ele DEVE retornar array com 2 items.`);\n}\n\n// ✅ SEMPRE FORÇA 2 OUTPUTS - mesmo que receba menos\nconst outputs = [];\n\n// Garante que teremos pelo menos 2 items para processar\nconst itemsToProcess = [...items];\nwhile (itemsToProcess.length < 2) {\n  console.warn(`⚠️ Duplicando item para garantir 2 outputs`);\n  itemsToProcess.push(JSON.parse(JSON.stringify(items[0] || {})));\n}\n\nfor (let itemIdx = 0; itemIdx < 2; itemIdx++) { // ✅ SEMPRE 2 iterações\n  const item = itemsToProcess[itemIdx] || {};\n  const itemData = item.json || {};\n  \n  console.log(`\\n📋 Processando Item ${itemIdx + 1}/2`);\n  console.log(`   _index original: ${itemData._index || 'N/A'}`);\n  \n  // ✅ GARANTE que _imageIndex está presente\n  if (!itemData._index) {\n    console.warn(`   ⚠️ _index ausente, definindo como ${itemIdx + 1}`);\n    itemData._index = itemIdx + 1;\n  }\n  \n  const refs = Array.isArray(itemData._refUrls) ? itemData._refUrls : [];\n  console.log(`   Refs totais: ${refs.length}`);\n  \n  // Separa URLs vs já prontas\n  const urlsToDownload = refs.filter(ref => {\n    if (typeof ref === 'string') return ref.startsWith('http');\n    if (ref?.url) return ref.url.startsWith('http') && !ref.url.startsWith('data:');\n    return false;\n  });\n  \n  const nonUrlRefs = refs.filter(ref => !urlsToDownload.includes(ref));\n  \n  console.log(`   URLs para download: ${urlsToDownload.length}`);\n  console.log(`   Refs já prontas: ${nonUrlRefs.length}`);\n  \n  if (urlsToDownload.length > 0) {\n    // ✅ TEM URLs: Cria output para cada URL\n    for (let urlIdx = 0; urlIdx < urlsToDownload.length; urlIdx++) {\n      const ref = urlsToDownload[urlIdx];\n      const urlString = typeof ref === 'string' ? ref : ref.url;\n      \n      outputs.push({\n        json: {\n          refUrl: urlString,\n          refIndex: urlIdx,\n          totalRefsForThisImage: urlsToDownload.length,\n          _originalData: itemData,\n          _nonUrlRefs: nonUrlRefs,\n          _imageIndex: itemData._index, // ✅ CRÍTICO\n          _totalImages: 2, // ✅ FORÇA 2\n          _hasDownload: true\n        }\n      });\n      console.log(`   ✅ Output criado para download ${urlIdx + 1} (imageIndex: ${itemData._index})`);\n    }\n  } else {\n    // ✅ SEM URLs: Passa direto\n    outputs.push({\n      json: {\n        ...itemData,\n        _skipDownload: true,\n        _nonUrlRefs: refs,\n        _imageIndex: itemData._index, // ✅ CRÍTICO\n        _totalImages: 2, // ✅ FORÇA 2\n        _hasDownload: false\n      }\n    });\n    console.log(`   ⏩ Sem URLs, passando direto (imageIndex: ${itemData._index})`);\n  }\n}\n\n// ✅ VALIDAÇÃO FINAL\nconst imageIndices = [...new Set(outputs.map(o => o.json._imageIndex))].sort((a, b) => a - b);\nconsole.log(`\\n📊 RESULTADO:`);\nconsole.log(`   Outputs criados: ${outputs.length}`);\nconsole.log(`   Índices de imagem: [${imageIndices.join(', ')}]`);\n\nif (imageIndices.length !== 2 || !imageIndices.includes(1) || !imageIndices.includes(2)) {\n  console.error(`❌ ERRO: Outputs não contêm índices 1 e 2!`);\n  console.error(`   Encontrado: [${imageIndices.join(', ')}]`);\n  console.error(`   Isso vai resultar em apenas ${imageIndices.length} imagem(ns) gerada(s)!`);\n}\n\nconsole.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\\n`);\n\nreturn outputs;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2560,
+        3216
+      ],
+      "id": "d4123f5a-17db-4783-ac7e-1f1dce0e4a35",
+      "name": "Explode refs",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.refUrl }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "image/*"
+            },
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (Windows NT 10.0; Win64)"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          },
+          "timeout": 120000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3072,
+        3216
+      ],
+      "id": "78a1022f-aacd-40fe-bb81-02d96c65afaa",
+      "name": "HTTP Request",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ═══════════════════════════════════════════════════════════════════\n// 📦 AGRUPA & INJETA - VERSÃO FINAL CORRIGIDA\n// ═══════════════════════════════════════════════════════════════════\n\nreturn (async () => {\n  const allInput = $input.all();\n  \n  console.log('━━━━━━━━━━ AGRUPAMENTO & INJEÇÃO ━━━━━━━━━━');\n  console.log(`📥 Total de inputs: ${allInput.length}`);\n  \n  // ✅ DEBUG: Log detalhado dos inputs\n  console.log('\\n🔍 DEBUG - Estrutura dos inputs:');\n  for (let i = 0; i < allInput.length; i++) {\n    const item = allInput[i];\n    const itemData = item.json || {};\n    console.log(`\\n  Input ${i + 1}:`);\n    console.log(`    - imageIndex: ${itemData._imageIndex || itemData._originalData?._index || 'N/A'}`);\n    console.log(`    - hasOriginalData: ${!!itemData._originalData}`);\n    console.log(`    - skipDownload: ${itemData._skipDownload || false}`);\n    console.log(`    - hasRefUrl: ${!!itemData.refUrl}`);\n    console.log(`    - refUrl: ${itemData.refUrl ? itemData.refUrl.substring(0, 60) + '...' : 'N/A'}`);\n    console.log(`    - hasBinary: ${!!item.binary?.data}`);\n    if (item.binary?.data) {\n      console.log(`    - Binary mimeType: ${item.binary.data.mimeType || 'N/A'}`);\n      console.log(`    - Binary fileName: ${item.binary.data.fileName || 'N/A'}`);\n    }\n    console.log(`    - hasNonUrlRefs: ${!!itemData._nonUrlRefs}`);\n    if (itemData._nonUrlRefs) {\n      const count = Array.isArray(itemData._nonUrlRefs) ? itemData._nonUrlRefs.length : 1;\n      console.log(`    - nonUrlRefs count: ${count}`);\n    }\n  }\n\n  // ✅ AGRUPA POR _imageIndex (cada requisição de imagem)\n  const groupedByImage = {};\n  \n  for (let idx = 0; idx < allInput.length; idx++) {\n    const item = allInput[idx];\n    const itemData = item.json || {};\n    const imageIndex = itemData._imageIndex || itemData._originalData?._index || 1;\n    \n    console.log(`\\n📋 Processando input ${idx + 1} para imageIndex ${imageIndex}`);\n    \n    if (!groupedByImage[imageIndex]) {\n      groupedByImage[imageIndex] = {\n        originalData: null,\n        downloadedRefs: [],\n        nonUrlRefs: []\n      };\n      console.log(`  ✅ Novo grupo criado para imagem ${imageIndex}`);\n    }\n    \n    // Guarda dados originais (apenas uma vez por grupo, prioriza _originalData)\n    if (!groupedByImage[imageIndex].originalData) {\n      if (itemData._originalData) {\n        groupedByImage[imageIndex].originalData = itemData._originalData;\n        console.log(`  ✅ originalData definido (de _originalData)`);\n      } else if (itemData._skipDownload) {\n        groupedByImage[imageIndex].originalData = itemData;\n        console.log(`  ✅ originalData definido (de skipDownload)`);\n      }\n    }\n    \n    // Coleta binários baixados\n    if (item.binary?.data) {\n      console.log(`  📥 Processando binário baixado...`);\n      try {\n        const buffer = await this.helpers.getBinaryDataBuffer(idx, 'data');\n        const mimeType = item.binary.data.mimeType || 'image/jpeg';\n        const base64 = buffer.toString('base64');\n        \n        groupedByImage[imageIndex].downloadedRefs.push({\n          mime: mimeType,\n          base64: base64\n        });\n        \n        console.log(`  ✅ Binário convertido para base64 (${Math.round(base64.length * 0.75 / 1024)}KB estimado)`);\n      } catch (e) {\n        console.error(`  ❌ Erro ao processar binário:`, e.message);\n        console.error(`  ❌ Stack:`, e.stack);\n      }\n    } else {\n      console.log(`  ⚠️ Nenhum binário encontrado neste item`);\n    }\n    \n    // ✅ CORREÇÃO CRÍTICA: Faz MERGE ao invés de sobrescrever\n    if (itemData._nonUrlRefs) {\n      console.log(`  🔗 Processando nonUrlRefs...`);\n      if (Array.isArray(itemData._nonUrlRefs)) {\n        console.log(`    - Array com ${itemData._nonUrlRefs.length} itens`);\n        // Adiciona cada ref individualmente para evitar duplicatas\n        for (const ref of itemData._nonUrlRefs) {\n          // Verifica se já não existe (evita duplicatas)\n          const exists = groupedByImage[imageIndex].nonUrlRefs.some(existing => {\n            if (typeof ref === 'string' && typeof existing === 'string') {\n              return ref === existing;\n            }\n            if (ref.base64 && existing.base64) {\n              return ref.base64 === existing.base64;\n            }\n            if (ref.url && existing.url) {\n              return ref.url === existing.url;\n            }\n            return false;\n          });\n          if (!exists) {\n            groupedByImage[imageIndex].nonUrlRefs.push(ref);\n            console.log(`    ✅ Ref adicionada (tipo: ${typeof ref})`);\n          } else {\n            console.log(`    ⏭️ Ref duplicada ignorada`);\n          }\n        }\n      } else {\n        console.log(`    - Item único`);\n        // Se não é array, adiciona diretamente\n        const exists = groupedByImage[imageIndex].nonUrlRefs.some(existing => {\n          if (typeof itemData._nonUrlRefs === 'string' && typeof existing === 'string') {\n            return itemData._nonUrlRefs === existing;\n          }\n          if (itemData._nonUrlRefs.base64 && existing.base64) {\n            return itemData._nonUrlRefs.base64 === existing.base64;\n          }\n          if (itemData._nonUrlRefs.url && existing.url) {\n            return itemData._nonUrlRefs.url === existing.url;\n          }\n          return false;\n        });\n        if (!exists) {\n          groupedByImage[imageIndex].nonUrlRefs.push(itemData._nonUrlRefs);\n          console.log(`    ✅ Ref adicionada`);\n        } else {\n          console.log(`    ⏭️ Ref duplicada ignorada`);\n        }\n      }\n    } else {\n      console.log(`  ⚠️ Nenhum nonUrlRefs neste item`);\n    }\n  }\n  \n  console.log(`\\n📊 RESUMO DO AGRUPAMENTO:`);\n  console.log(`   Total de grupos: ${Object.keys(groupedByImage).length}`);\n  for (const [idx, group] of Object.entries(groupedByImage)) {\n    console.log(`   Grupo ${idx}:`);\n    console.log(`     - downloadedRefs: ${group.downloadedRefs.length}`);\n    console.log(`     - nonUrlRefs: ${group.nonUrlRefs.length}`);\n    console.log(`     - hasOriginalData: ${!!group.originalData}`);\n    if (group.originalData) {\n      console.log(`     - originalData._index: ${group.originalData._index}`);\n      console.log(`     - originalData._totalImages: ${group.originalData._totalImages}`);\n    }\n  }\n  \n  // ✅ VALIDAÇÃO: Deve ter exatamente 2 grupos (uma para cada imagem)\n  const imageIndices = Object.keys(groupedByImage).map(k => parseInt(k)).sort((a, b) => a - b);\n  console.log(`\\n🔍 Índices de imagem encontrados: [${imageIndices.join(', ')}]`);\n  \n  if (imageIndices.length !== 2) {\n    console.warn(`\\n⚠️ AVISO: Esperado 2 imagens, mas encontrado ${imageIndices.length} grupos!`);\n    console.warn(`   Isso pode indicar que as 2 requisições não estão sendo processadas corretamente.`);\n  }\n  \n  // ✅ PROCESSA CADA IMAGEM (DEVE SER 2)\n  const outputs = [];\n  \n  // Ordena por índice para garantir ordem correta\n  const sortedIndices = Object.keys(groupedByImage).sort((a, b) => parseInt(a) - parseInt(b));\n  \n  for (const imageIndex of sortedIndices) {\n    const group = groupedByImage[imageIndex];\n    \n    console.log(`\\n🖼️ Processando Imagem ${imageIndex}/${group.originalData?._totalImages || '?'}`);\n    \n    const originalData = group.originalData;\n    if (!originalData || !originalData._body) {\n      console.error(`❌ Imagem ${imageIndex}: Dados originais não encontrados`);\n      console.error(`   Isso impede a criação desta requisição!`);\n      continue;\n    }\n    \n    // Coleta TODAS as referências desta imagem\n    const finalRefs = [];\n    \n    // A. Refs baixadas\n    finalRefs.push(...group.downloadedRefs);\n    console.log(`   📥 Refs baixadas: ${group.downloadedRefs.length}`);\n    \n    // B. Refs já prontas\n    console.log(`   💾 Processando ${group.nonUrlRefs.length} nonUrlRefs...`);\n    for (const ref of group.nonUrlRefs) {\n      if (ref.base64 && ref.mime) {\n        finalRefs.push({ mime: ref.mime, base64: ref.base64 });\n        console.log(`     ✅ Ref adicionada (base64 + mime)`);\n      } else if (ref.type === 'base64' && ref.base64) {\n        finalRefs.push({ mime: ref.mime, base64: ref.base64 });\n        console.log(`     ✅ Ref adicionada (type: base64)`);\n      } else if (typeof ref === 'string' && ref.startsWith('data:image/')) {\n        const match = ref.match(/data:image\\/([^;]+);base64,(.+)/);\n        if (match) {\n          finalRefs.push({ mime: `image/${match[1]}`, base64: match[2] });\n          console.log(`     ✅ Ref adicionada (data URI string)`);\n        } else {\n          console.log(`     ⚠️ String data URI inválida: ${ref.substring(0, 50)}...`);\n        }\n      } else if (ref.type === 'url' && ref.url) {\n        // Se ainda é uma URL (não foi baixada), ignora (já deveria ter sido baixada)\n        console.log(`     ⚠️ Ref URL não baixada ignorada: ${ref.url.substring(0, 50)}...`);\n      } else {\n        console.log(`     ⚠️ Ref ignorada (formato não reconhecido):`, typeof ref, ref);\n      }\n    }\n    console.log(`   📊 TOTAL REFS FINAIS: ${finalRefs.length}`);\n    \n    // Monta body final\n    const finalBody = JSON.parse(JSON.stringify(originalData._body));\n    \n    if (!finalBody.messages) finalBody.messages = [];\n    if (finalBody.messages.length === 0) {\n      finalBody.messages.push({ role: 'user', content: [] });\n    }\n    \n    const userMessage = finalBody.messages[0];\n    \n    if (typeof userMessage.content === 'string') {\n      userMessage.content = [{ type: 'text', text: userMessage.content }];\n    }\n    \n    let textContent = userMessage.content.find(c => c.type === 'text');\n    if (!textContent) {\n      textContent = { type: 'text', text: '' };\n      userMessage.content.unshift(textContent);\n    }\n    \n    const contentBefore = userMessage.content.length;\n    \n    // ✅ INJETA REFERÊNCIAS\n    if (finalRefs.length > 0) {\n      console.log(`   💉 Injetando ${finalRefs.length} referências no body...`);\n      \n      for (const ref of finalRefs) {\n        userMessage.content.push({\n          type: 'image_url',\n          image_url: {\n            url: `data:${ref.mime};base64,${ref.base64}`\n          }\n        });\n      }\n      \n      const contentAfter = userMessage.content.length;\n      console.log(`   ✅ Referências injetadas: ${contentBefore} → ${contentAfter} itens no content`);\n      console.log(`   ✅ Body pronto com ${finalRefs.length} referência(s)`);\n    } else {\n      console.log(`   ⚠️ Nenhuma referência para injetar`);\n      console.log(`   ⚠️ Esta requisição será enviada SEM referências!`);\n    }\n    \n    // Adiciona ao output\n    outputs.push({\n      json: {\n        _endpoint: originalData._endpoint,\n        _body: finalBody,\n        _model: originalData._model,\n        _index: originalData._index,\n        _totalImages: originalData._totalImages,\n        _size: originalData._size,\n        _hasRefs: finalRefs.length > 0,\n        _refCount: finalRefs.length\n      }\n    });\n    \n    console.log(`   ✅ Output criado para imagem ${imageIndex} (refs: ${finalRefs.length})`);\n  }\n  \n  console.log(`\\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);\n  console.log(`✅ OUTPUTS FINAIS: ${outputs.length} requisições prontas`);\n  if (outputs.length !== 2) {\n    console.warn(`⚠️ AVISO: Esperado 2 requisições, mas gerado ${outputs.length}!`);\n    console.warn(`   Isso significa que nem todas as imagens serão geradas!`);\n  } else {\n    console.log(`✅ SUCESSO: 2 requisições criadas corretamente!`);\n  }\n  console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);\n  \n  return outputs;\n})();\n\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3360,
+        3216
+      ],
+      "id": "fc35caf5-abb1-4510-b009-b9bac928c073",
+      "name": "Agrupa & injeta no body",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "511b1182-ced9-4f8f-9dbf-12871f1690b9",
+              "leftValue": "={{ $json.refUrl }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "exists",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2896,
+        3376
+      ],
+      "id": "54c5851f-e0a8-4caf-bc68-ce4d6e1a503d",
+      "name": "If",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ═══════════════════════════════════════════════════════════════════\n// 📊 EXTRAI DADOS DE USO DAS APIS - FORMATA RESPOSTA PARA FRONTEND\n// ═══════════════════════════════════════════════════════════════════\n\nconst code4Output = $input.first().json;\nconst imagesFromCode4 = code4Output?.images || [];\n\nconsole.log('━━━━━━━━━━ FORMATAÇÃO FINAL PARA FRONTEND ━━━━━━━━━━');\nconsole.log(`📥 Imagens recebidas: ${imagesFromCode4.length}`);\n\n// ==================== VALIDAÇÃO E LOG ====================\nif (imagesFromCode4.length > 0) {\n  console.log('📋 Detalhes das imagens:');\n  imagesFromCode4.forEach((img, i) => {\n    const base64Length = img.base64?.length || 0;\n    const sizeKB = Math.round(base64Length * 0.75 / 1024); // Estimativa de tamanho\n    console.log(`  ${i + 1}. ${img.fileName}`);\n    console.log(`     ├─ MIME: ${img.mimeType}`);\n    console.log(`     ├─ Base64: ${base64Length} chars (~${sizeKB}KB)`);\n    console.log(`     └─ Fonte: ${img.source || 'N/A'}`);\n  });\n} else {\n  console.warn('⚠️ AVISO: Nenhuma imagem foi extraída!');\n  console.warn('Estrutura recebida:', JSON.stringify(code4Output, null, 2).substring(0, 500));\n}\n\n// ==================== FORMATAÇÃO PARA FRONTEND ====================\nconst formattedImages = imagesFromCode4.map((img, index) => ({\n  id: index + 1,\n  fileName: img.fileName || `thumbnail-${index + 1}.jpg`,\n  mimeType: img.mimeType || 'image/jpeg',\n  base64: img.base64 || '',\n  dataUri: img.base64 ? `data:${img.mimeType || 'image/jpeg'};base64,${img.base64}` : null,\n  source: img.source || 'unknown',\n  sizeEstimateKB: img.base64 ? Math.round(img.base64.length * 0.75 / 1024) : 0\n}));\n\n// ==================== VALIDAÇÃO DE QUALIDADE ====================\nconst validImages = formattedImages.filter(img => img.base64 && img.base64.length > 100);\nconst invalidImages = formattedImages.filter(img => !img.base64 || img.base64.length <= 100);\n\nif (invalidImages.length > 0) {\n  console.warn(`⚠️ ${invalidImages.length} imagem(ns) inválida(s) detectada(s)`);\n}\n\n// ==================== ESTATÍSTICAS ====================\nconst totalSizeKB = validImages.reduce((sum, img) => sum + img.sizeEstimateKB, 0);\n\nconsole.log('\\n📊 ESTATÍSTICAS:');\nconsole.log(`   ✅ Imagens válidas: ${validImages.length}`);\nconsole.log(`   ❌ Imagens inválidas: ${invalidImages.length}`);\nconsole.log(`   💾 Tamanho total estimado: ~${totalSizeKB}KB`);\nconsole.log(`   📦 Tamanho médio: ~${Math.round(totalSizeKB / (validImages.length || 1))}KB`);\n\n// ==================== PREPARAÇÃO DO PAYLOAD DE RESPOSTA ====================\nconst responsePayload = {\n  success: validImages.length > 0,\n  count: validImages.length,\n  images: validImages,\n  metadata: {\n    totalRequests: code4Output?.extractionInfo?.inputItems || 0,\n    imagesExtracted: validImages.length,\n    invalidImages: invalidImages.length,\n    totalSizeKB: totalSizeKB,\n    averageSizeKB: Math.round(totalSizeKB / (validImages.length || 1)),\n    timestamp: new Date().toISOString(),\n    processingTime: code4Output?.extractionInfo?.timestamp \n      ? `${Math.round((new Date() - new Date(code4Output.extractionInfo.timestamp)) / 1000)}s`\n      : 'N/A'\n  }\n};\n\n// ==================== ADICIONA ERROS SE HOUVER ====================\nif (code4Output?.errors && code4Output.errors.length > 0) {\n  responsePayload.errors = code4Output.errors;\n  console.warn(`⚠️ ${code4Output.errors.length} erro(s) reportado(s) pelo Code4`);\n}\n\n// ==================== LOG FINAL ====================\nconsole.log('\\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');\nconsole.log(`✅ Retornando ${validImages.length} imagem(ns) para o frontend`);\nconsole.log(`📤 Payload pronto para Respond to Webhook`);\nconsole.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');\n\n// ==================== RETORNO ====================\nreturn [{ json: responsePayload }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4400,
+        3152
+      ],
+      "id": "d119a61a-2f78-4e54-ae38-a29eea110ac3",
+      "name": "EXTRAI DADOS DE USO DAS APIS",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-5-mini",
+          "mode": "list",
+          "cachedResultName": "gpt-5-mini"
+        },
+        "responsesApiEnabled": false,
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        2992,
+        2640
+      ],
+      "id": "f11a78fd-565d-429d-9e55-072ae59471b6",
+      "name": "OpenAI Chat Model",
+      "credentials": {
+        "openAiApi": {
+          "id": "21qvZTFAS9T9ZdRw",
+          "name": "Teste"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={\n   \"modelo\": \"google/gemini-2.5-flash-image\",\n  \n  \"camposEntrada\": {\n    \"descricao\": \"Campos recebidos via webhook POST do frontend [web:15][web:16]\",\n    \"estruturaJSON\": {\n      \"title\": \"{{ $('Webhook').item.json.body.title }}\",\n      \"description\": \"{{ $('Webhook').item.json.body.description }}\",\n      \"category\": \"{{ $('Webhook').item.json.body.category }}\",\n      \"resolutions\": \"{{ $('Webhook').item.json.body.resolutions }}\",\n      \"userMessage\": \"{{ $('Webhook').item.json.body.userMessage }}\",\n      \"referenceImages\": \"{{ $('Webhook').item.json.body.referenceImages }}\"\n    },\n    \n    \"exemploPayloadFrontend\": {\n      \"body\": {\n        \"title\": \"Curso Completo de Python para Iniciantes\",\n        \"description\": \"Aprenda Python do zero com projetos práticos e exercícios\",\n        \"category\": \"Programação\",\n        \"resolutions\": \"1280x720\",\n        \"userMessage\": \"Quero uma capa moderna e chamativa com cores vibrantes\",\n        \"referenceImages\": [\n          \"https://exemplo.com/imagem1.jpg\",\n          \"https://exemplo.com/imagem2.jpg\",\n          \"https://exemplo.com/imagem3.jpg\"\n        ]\n      }\n    },\n    \n    \"validacaoCampos\": {\n      \"title\": {\n        \"obrigatorio\": true,\n        \"tipo\": \"string\",\n        \"maxCaracteres\": 100,\n        \"descricao\": \"Título do curso que será simplificado para a capa\"\n      },\n      \"description\": {\n        \"obrigatorio\": false,\n        \"tipo\": \"string\",\n        \"maxCaracteres\": 500,\n        \"descricao\": \"Descrição detalhada para contexto do design\"\n      },\n      \"category\": {\n        \"obrigatorio\": true,\n        \"tipo\": \"string\",\n        \"opcoes\": [\"Programação\", \"Design\", \"Marketing\", \"Business\", \"Saúde\", \"Educação\", \"Tecnologia\"],\n        \"descricao\": \"Categoria que define a paleta de cores automática\"\n      },\n      \"resolutions\": {\n        \"obrigatorio\": true,\n        \"tipo\": \"string\",\n        \"opcoes\": [\"1920x1080\", \"1280x720\", \"1080x1080\", \"1080x1350\", \"1080x1920\"],\n        \"padrao\": \"1280x720\",\n        \"descricao\": \"Resolução da imagem final\"\n      },\n      \"userMessage\": {\n        \"obrigatorio\": false,\n        \"tipo\": \"string\",\n        \"maxCaracteres\": 300,\n        \"descricao\": \"Instruções específicas do usuário sobre estilo, cores, elementos\"\n      },\n      \"referenceImages\": {\n        \"obrigatorio\": false,\n        \"tipo\": \"array\",\n        \"maxItens\": 3,\n        \"descricao\": \"URLs de até 3 imagens de referência para integração no design\"\n      }\n    }\n  },\n\n  \"sistemPrompt\": \"Você é um DESIGNER ESPECIALIZADO em criar capas cinematográficas estilo Netflix. Suas criações seguem os princípios de design da Netflix: minimalismo com foco claro, hierarquia visual forte, composição cinematográfica e alta qualidade visual [web:2][web:9].\",\n  \n  \"processamentoDados\": {\n    \"etapa1_analise\": \"Analisar o título ({{ $('Webhook').item.json.body.title }}) e simplificar para 2-4 palavras-chave impactantes em MAIÚSCULAS\",\n    \n    \"etapa2_categoria\": \"Com base na categoria ({{ $('Webhook').item.json.body.category }}), selecionar paleta de cores estilo Netflix apropriada\",\n    \n    \"etapa3_resolucao\": \"Converter resolutions ({{ $('Webhook').item.json.body.resolutions }}) em aspectRatio correto: 1920x1080 ou 1280x720 → '16:9', 1080x1080 → '1:1', 1080x1350 ou 1080x1920 → '9:16'\",\n    \n    \"etapa4_userMessage\": \"Integrar instruções do userMessage ({{ $('Webhook').item.json.body.userMessage }}) mantendo princípios Netflix de minimalismo e foco\",\n    \n    \"etapa5_referencias\": \"Se referenceImages existirem ({{ $('Webhook').item.json.body.referenceImages }}), TODAS devem ser integradas artisticamente. Rostos e pessoas devem ser preservados EXATAMENTE como nas referências - SEM alterações\"\n  },\n\n  \"paletasPorCategoria\": {\n    \"Programação\": {\n      \"primary\": \"#0A1929\",\n      \"secondary\": \"#00D4FF\", \n      \"accent\": \"#FFD700\",\n      \"mood\": \"tech-forward e moderno\"\n    },\n    \"Design\": {\n      \"primary\": \"#1A1A2E\",\n      \"secondary\": \"#6C5CE7\",\n      \"accent\": \"#FD79A8\",\n      \"mood\": \"criativo e sofisticado\"\n    },\n    \"Marketing\": {\n      \"primary\": \"#0D0D0D\",\n      \"secondary\": \"#E17055\",\n      \"accent\": \"#0984E3\",\n      \"mood\": \"energético e persuasivo\"\n    },\n    \"Business\": {\n      \"primary\": \"#0A0A0A\",\n      \"secondary\": \"#D4AF37\",\n      \"accent\": \"#FFFFFF\",\n      \"mood\": \"premium e profissional\"\n    },\n    \"Saúde\": {\n      \"primary\": \"#FFFFFF\",\n      \"secondary\": \"#4CAF50\",\n      \"accent\": \"#FFC107\",\n      \"mood\": \"energético e vital\"\n    },\n    \"Educação\": {\n      \"primary\": \"#2C3E50\",\n      \"secondary\": \"#E67E22\",\n      \"accent\": \"#ECF0F1\",\n      \"mood\": \"acessível e confiável\"\n    },\n    \"Tecnologia\": {\n      \"primary\": \"#0D0D0D\",\n      \"secondary\": \"#E94560\",\n      \"accent\": \"#00D4FF\",\n      \"mood\": \"futurista e inovador\"\n    }\n  },\n\n  \"estruturaPromptFinal\": {\n    \"parte1_contexto\": \"A professional, cinematic Netflix-style course cover design optimized for streaming platforms. The composition follows minimalist principles with ONE clear focal point. The layout is clean, sophisticated, and immediately captures attention with dramatic visual hierarchy.\",\n    \n    \"parte2_tipografia\": \"PRIMARY TITLE: The course title '[TÍTULO SIMPLIFICADO DO CAMPO title]' is displayed using bold, modern typography (geometric sans-serif like Bebas Neue or Montserrat Black). Font size: 90-110px equivalent. Color: [COR BASEADA NA category] for MAXIMUM contrast. Text effects: subtle depth with soft shadow (6px offset, 3px blur) or elegant glow effect. Letter spacing: 3-4px for premium feel. Typography is CRISP, BOLD, and optimized for thumbnail visibility.\",\n    \n    \"parte3_visual\": \"The background features a SINGLE dominant visual element [BASEADO NA description E category]. Cinematic color grading with Netflix-inspired palette: [CORES DA paletasPorCategoria BASEADAS NA category]. Design style: cinematic photography aesthetic with subtle vignetting, professional color grading, and atmospheric depth. Lighting: dramatic studio lighting with controlled shadows creating depth and premium feel. [INTEGRAR userMessage SE FORNECIDO].\",\n    \n    \"parte4_integracao_referencias\": \"CRITICAL: If referenceImages are provided, ALL images MUST be seamlessly integrated into the composition. Faces and people from references are preserved EXACTLY as shown - NO alterations permitted. The design MUST center around these reference images as the primary visual focus, creating an artistic collage or layered composition that maintains Netflix's clean, focused aesthetic.\",\n    \n    \"parte5_acabamento\": \"Professional Netflix-quality execution: generous negative space (12% padding minimum), clear visual hierarchy guiding eye to title first. Mood: [MOOD DA paletasPorCategoria]. The design follows Netflix's 2024-2025 aesthetic: bold minimalism, cinematic lighting, strong contrast, premium polish. Final quality: 4K-ready, zero artifacts, streaming-platform optimized.\"\n  },\n\n  \"negativePrompt\": \"blurry, low quality, illegible text, misspelled words, cut off text, watermark, amateur design, cluttered composition, poor contrast, pixelated, artifacts, distorted typography, unprofessional, low resolution, bad lighting, oversaturated colors, text too small, text blending with background, busy design, multiple focal points, generic stock photos, cartoonish, outdated design trends, altered faces, modified people from references\",\n  \n  \"formatoSaidaJSON\": {\n    \"modelo\": \"google/gemini-3-pro-image-preview\",\n    \"prompt\": \"[PROMPT COMPLETO SEGUINDO ESTRUTURA DE 5 PARTES COM DADOS DOS CAMPOS]\",\n    \"negativePrompt\": \"[NEGATIVE PROMPT COMPLETO]\",\n    \"size\": \"{{ $('Webhook').item.json.body.resolutions }}\",\n    \"aspectRatio\": \"[CALCULADO A PARTIR DE resolutions]\",\n    \"numberOfImages\": 2,\n    \"metadata\": {\n      \"originalTitle\": \"{{ $('Webhook').item.json.body.title }}\",\n      \"category\": \"{{ $('Webhook').item.json.body.category }}\",\n      \"hasReferences\": \"{{ $('Webhook').item.json.body.referenceImages ? true : false }}\"\n    }\n  }\n}\n",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        2992,
+        2848
+      ],
+      "id": "bf5862e3-a7c7-400b-8165-6501ff872de9",
+      "name": "AI Agent"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "HTTP Request3": {
+      "main": [
+        [
+          {
+            "node": "Code4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code4": {
+      "main": [
+        [
+          {
+            "node": "EXTRAI DADOS DE USO DAS APIS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code1": {
+      "main": [
+        [
+          {
+            "node": "Gera o body + url",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gera o body + url": {
+      "main": [
+        [
+          {
+            "node": "Explode refs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Explode refs": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Agrupa & injeta no body",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agrupa & injeta no body": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Agrupa & injeta no body",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "EXTRAI DADOS DE USO DAS APIS": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Code1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "a4703b75-8782-445b-8d71-567d6a2e30c0",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "20ddc5aff6afecbe10adde5f2a978971314d747b86107ecf1ef4e64c40d9174d"
+  },
+  "id": "DiaE9uxn1407DJB7",
+  "tags": []
+}
