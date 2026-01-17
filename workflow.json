@@ -14,7 +14,7 @@
             },
             {
               "name": "Authorization",
-              "value": "Bearer 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"
+              "value": "Bearer YOUR_OPENROUTER_API_KEY"
             },
             {
               "name": "HTTP-Referer",
