@@ -253,13 +253,7 @@
         2640
       ],
       "id": "f11a78fd-565d-429d-9e55-072ae59471b6",
-      "name": "OpenAI Chat Model",
-      "credentials": {
-        "openAiApi": {
-          "id": "21qvZTFAS9T9ZdRw",
-          "name": "Teste"
-        }
-      }
+      "name": "OpenAI Chat Model"
     },
     {
       "parameters": {
